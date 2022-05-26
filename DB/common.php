@@ -122,6 +122,12 @@ class DB_common extends PEAR
     var $prepared_queries = array();
 
     /**
+     * The prepared raw queries
+     * @var array
+     */
+    var $prepared_raw_queries = array();
+
+    /**
      * Flag indicating that the last query was a manipulation query.
      * @access protected
      * @var boolean
@@ -828,6 +834,7 @@ class DB_common extends PEAR
         $k = key($this->prepare_tokens);
         $this->prepare_types[$k] = $types;
         $this->prepared_queries[$k] = implode(' ', $newtokens);
+        $this->prepared_raw_queries[$k] = $query;
 
         return $k;
     }
@@ -1008,7 +1015,23 @@ class DB_common extends PEAR
         if (DB::isError($realquery)) {
             return $realquery;
         }
-        $result = $this->simpleQuery($realquery);
+
+
+        if (extension_loaded('elastic_apm')) {
+            $span = \Elastic\Apm\ElasticApm::getCurrentTransaction()->beginCurrentSpan(
+                mb_convert_encoding($this->prepared_raw_queries[$stmt], 'EUC-JP', 'UTF-8'),
+                'mysqli',
+            );
+            $span->context()->db()->setStatement($stmt);
+
+            try {
+                $result = $this->simpleQuery($realquery);
+            } finally {
+                $span->end();
+            }
+        } else {
+            $result = $this->simpleQuery($realquery);
+        }
 
         if ($result === DB_OK || DB::isError($result)) {
             return $result;
@@ -1124,6 +1147,7 @@ class DB_common extends PEAR
             unset($this->prepare_tokens[$stmt]);
             unset($this->prepare_types[$stmt]);
             unset($this->prepared_queries[$stmt]);
+            unset($this->prepared_raw_queries[$stmt]);
             return true;
         }
         return false;
@@ -1209,6 +1233,7 @@ class DB_common extends PEAR
                 return $sth;
             }
             $ret = $this->execute($sth, $params);
+
             $this->freePrepared($sth, false);
             return $ret;
         } else {
